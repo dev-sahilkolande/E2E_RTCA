@@ -23,6 +23,7 @@ public class ChatRequestService {
     private final ChatRequestRepository chatRequestRepository;
     private final UserRepository userRepository;
     private final ConversationService conversationService;
+    private final FriendshipService friendshipService;
     private final PasswordEncoder passwordEncoder;
     private final SimpMessagingTemplate messagingTemplate;
 
@@ -30,11 +31,13 @@ public class ChatRequestService {
     public ChatRequestService(ChatRequestRepository chatRequestRepository,
                               UserRepository userRepository,
                               ConversationService conversationService,
+                              FriendshipService friendshipService,
                               PasswordEncoder passwordEncoder,
                               SimpMessagingTemplate messagingTemplate) {
         this.chatRequestRepository = chatRequestRepository;
         this.userRepository = userRepository;
         this.conversationService = conversationService;
+        this.friendshipService = friendshipService;
         this.passwordEncoder = passwordEncoder;
         this.messagingTemplate = messagingTemplate;
     }
@@ -50,7 +53,6 @@ public class ChatRequestService {
         User receiver = userRepository.findById(payload.getReceiverId())
                 .orElseThrow(() -> new IllegalArgumentException("Receiver user not found."));
 
-        // Check for existing pending request
         if (chatRequestRepository.existsBySenderIdAndReceiverIdAndStatus(senderId, payload.getReceiverId(), "PENDING")) {
             throw new IllegalArgumentException("A pending chat request already exists for this user.");
         }
@@ -59,7 +61,6 @@ public class ChatRequestService {
         ChatRequest chatRequest = new ChatRequest(sender, receiver, passcodeHash);
         ChatRequest saved = chatRequestRepository.save(chatRequest);
 
-        // Send real-time notification to receiver
         NotificationEvent notification = new NotificationEvent(
                 "CHAT_REQUEST",
                 sender.getId(),
@@ -101,7 +102,9 @@ public class ChatRequestService {
         // Create 1-on-1 Conversation between sender and receiver
         ConversationDto conversation = conversationService.getOrCreateConversation(receiverId, chatRequest.getSender().getId());
 
-        // Send real-time notification to sender
+        // Create mutual friendship record
+        friendshipService.createMutualFriendship(receiverId, chatRequest.getSender().getId());
+
         NotificationEvent notification = new NotificationEvent(
                 "CHAT_REQUEST_ACCEPTED",
                 chatRequest.getReceiver().getId(),

@@ -8,6 +8,8 @@ import { ConversationList } from './components/chat/ConversationList';
 import { ConversationView } from './components/chat/ConversationView';
 import { SendChatRequestModal } from './components/chat/SendChatRequestModal';
 import { AcceptChatRequestModal } from './components/chat/AcceptChatRequestModal';
+import { FriendsListModal } from './components/chat/FriendsListModal';
+import { ContextMenu } from './components/common/ContextMenu';
 import api from './services/api';
 import { websocketService } from './services/websocketService';
 import { cryptoService } from './services/cryptoService';
@@ -28,6 +30,14 @@ const MainApp = () => {
   const [messages, setMessages] = useState([]);
   const [loadingMessages, setLoadingMessages] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
+
+  // Friends & Starred Favorites State
+  const [friends, setFriends] = useState([]);
+  const [starredFriendIds, setStarredFriendIds] = useState(new Set());
+  const [showFriendsModal, setShowFriendsModal] = useState(false);
+
+  // Context Menu State (Right Click)
+  const [contextMenu, setContextMenu] = useState(null); // { x, y, conversation }
 
   // Pending Chat Requests & Notifications State
   const [pendingRequests, setPendingRequests] = useState([]);
@@ -73,7 +83,6 @@ const MainApp = () => {
   const decryptSingleMessage = async (msg, currentUserId, otherUser) => {
     if (!msg) return msg;
 
-    // If message content is already valid plain text (and not literal '[Encrypted Message]'), return msg immediately!
     if (msg.content && msg.content !== '[Encrypted Message]') {
       return msg;
     }
@@ -150,11 +159,28 @@ const MainApp = () => {
     }
   };
 
-  // Initialize WebSockets, Presence & Notifications on login
+  const fetchFriends = async () => {
+    try {
+      const res = await api.get('/friends');
+      if (res.data && res.data.success) {
+        const list = res.data.data;
+        setFriends(list);
+        const starredSet = new Set(
+          list.filter((f) => f.isStarred).map((f) => f.friend?.id)
+        );
+        setStarredFriendIds(starredSet);
+      }
+    } catch (err) {
+      console.warn('Failed to fetch friends list:', err);
+    }
+  };
+
+  // Initialize WebSockets, Presence, Notifications & Friends on login
   useEffect(() => {
     if (isAuthenticated && token && user?.id) {
       fetchConversations();
       fetchPendingRequests();
+      fetchFriends();
 
       // Fetch initial presence
       api.get('/presence')
@@ -171,7 +197,6 @@ const MainApp = () => {
         () => {
           setIsConnected(true);
 
-          // Presence subscription
           websocketService.subscribeToPresence((event) => {
             if (event && event.userId) {
               setOnlineUserIds((prev) => {
@@ -186,13 +211,13 @@ const MainApp = () => {
             }
           });
 
-          // User notifications subscription
           websocketService.subscribeToUserNotifications(user.id, (notification) => {
             if (notification.type === 'CHAT_REQUEST') {
               fetchPendingRequests();
             }
             if (notification.type === 'CHAT_REQUEST_ACCEPTED') {
               fetchConversations();
+              fetchFriends();
             }
             if (notification.type === 'NEW_MESSAGE') {
               fetchConversations();
@@ -302,7 +327,6 @@ const MainApp = () => {
     return () => clearTimeout(timer);
   }, [searchQuery]);
 
-  // When clicking on a user in search -> open Chat Request Modal
   const handleSelectUser = (targetUser) => {
     setSelectedUserForRequest(targetUser);
     setSearchQuery('');
@@ -360,7 +384,7 @@ const MainApp = () => {
 
     const sent = websocketService.sendMessage(
       activeConversation.id,
-      plainContent, // Send actual text so both users can read their messages!
+      plainContent,
       ciphertext,
       iv,
       signature
@@ -370,6 +394,66 @@ const MainApp = () => {
       setMessages((prev) =>
         prev.map((m) => (m.id === pendingMsg.id ? { ...m, status: 'failed' } : m))
       );
+    }
+  };
+
+  // Right-click context menu handler on conversation items
+  const handleConversationContextMenu = (e, conv) => {
+    setContextMenu({
+      x: e.clientX,
+      y: e.clientY,
+      conversation: conv
+    });
+  };
+
+  // Context Menu Actions:
+  const handleToggleStarFromConv = async (conv) => {
+    const otherUser = getOtherParticipant(conv.participants, user?.id);
+    if (!otherUser) return;
+
+    try {
+      const res = await api.post(`/friends/${otherUser.id}/star`);
+      if (res.data && res.data.success) {
+        fetchFriends();
+      }
+    } catch (err) {
+      console.error('Failed to star friend:', err);
+    }
+  };
+
+  const handleRemoveFriendFromConv = async (conv) => {
+    const otherUser = getOtherParticipant(conv.participants, user?.id);
+    if (!otherUser) return;
+
+    if (!window.confirm(`Remove ${otherUser.username} from your friends list?`)) return;
+
+    try {
+      await api.delete(`/friends/${otherUser.id}`);
+      fetchFriends();
+    } catch (err) {
+      console.error('Failed to remove friend:', err);
+    }
+  };
+
+  const handleDeleteConversation = async (conv) => {
+    if (!window.confirm('Delete this conversation from your chat list?')) return;
+
+    setConversations((prev) => prev.filter((c) => c.id !== conv.id));
+    if (activeConversation?.id === conv.id) {
+      setActiveConversation(null);
+    }
+  };
+
+  const handleSelectFriendChat = async (friendUser) => {
+    try {
+      const res = await api.post('/conversations', { targetUserId: friendUser.id });
+      if (res.data && res.data.success) {
+        const conv = res.data.data;
+        setActiveConversation(conv);
+        fetchConversations();
+      }
+    } catch (err) {
+      console.error('Failed to open friend chat:', err);
     }
   };
 
@@ -391,6 +475,10 @@ const MainApp = () => {
     return <LoginPage onNavigateRegister={() => setCurrentScreen('register')} />;
   }
 
+  const contextOtherUser = contextMenu ? getOtherParticipant(contextMenu.conversation?.participants, user?.id) : null;
+  const isContextUserStarred = contextOtherUser ? starredFriendIds.has(contextOtherUser.id) : false;
+  const isContextConvLocked = contextMenu ? localStorage.getItem(`chat_locked_${contextMenu.conversation?.id}`) === 'true' : false;
+
   return (
     <>
       <ChatLayout
@@ -409,6 +497,7 @@ const MainApp = () => {
               loading={searching}
               onSelectUser={handleSelectUser}
               onClearSearch={() => setSearchQuery('')}
+              onOpenFriendsModal={() => setShowFriendsModal(true)}
             />
             <ConversationList
               conversations={conversations}
@@ -420,6 +509,8 @@ const MainApp = () => {
               loading={loadingConversations}
               currentUserId={user?.id}
               onlineUserIds={onlineUserIds}
+              starredFriendIds={starredFriendIds}
+              onConversationContextMenu={handleConversationContextMenu}
             />
           </>
         }
@@ -436,6 +527,37 @@ const MainApp = () => {
           />
         }
       />
+
+      {/* Right Click Context Menu */}
+      {contextMenu && (
+        <ContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          conversation={contextMenu.conversation}
+          isStarred={isContextUserStarred}
+          isLocked={isContextConvLocked}
+          onClose={() => setContextMenu(null)}
+          onToggleStar={handleToggleStarFromConv}
+          onToggleLock={(conv) => {
+            const currentLocked = localStorage.getItem(`chat_locked_${conv.id}`) === 'true';
+            localStorage.setItem(`chat_locked_${conv.id}`, currentLocked ? 'false' : 'true');
+            if (activeConversation?.id === conv.id) {
+              setActiveConversation({ ...conv });
+            }
+          }}
+          onRemoveFriend={handleRemoveFriendFromConv}
+          onDeleteConversation={handleDeleteConversation}
+        />
+      )}
+
+      {/* Friends List Modal */}
+      {showFriendsModal && (
+        <FriendsListModal
+          onClose={() => setShowFriendsModal(false)}
+          onSelectFriendChat={handleSelectFriendChat}
+          onlineUserIds={onlineUserIds}
+        />
+      )}
 
       {/* Send Chat Request Modal */}
       {selectedUserForRequest && (
@@ -454,6 +576,7 @@ const MainApp = () => {
           onRequestAccepted={(newConv) => {
             fetchConversations();
             fetchPendingRequests();
+            fetchFriends();
             if (newConv) setActiveConversation(newConv);
           }}
           onRequestRejected={() => fetchPendingRequests()}
