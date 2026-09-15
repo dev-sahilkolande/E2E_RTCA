@@ -74,6 +74,8 @@ const MainApp = () => {
     if (!msg.ciphertext || !msg.iv || !msg.isEncrypted) return msg;
 
     const senderId = msg.sender?.id || msg.senderId;
+    const otherUserId = otherUser ? otherUser.id : (senderId === currentUserId ? null : senderId);
+
     let ecdhPublicKeyToUse = null;
     let ecdsaPublicKeyToUse = null;
 
@@ -90,11 +92,6 @@ const MainApp = () => {
       ecdsaPublicKeyToUse = senderKeys?.publicEcdsaKey;
     }
 
-    if (!ecdhPublicKeyToUse) {
-      console.warn(`E2EE Decrypt Warning: Public key missing for user ID ${senderId}.`);
-      return msg;
-    }
-
     try {
       const plaintext = await cryptoService.decryptMessage(
         currentUserId,
@@ -102,17 +99,23 @@ const MainApp = () => {
         msg.iv,
         msg.signature,
         ecdhPublicKeyToUse,
-        ecdsaPublicKeyToUse
+        ecdsaPublicKeyToUse,
+        msg.conversationId,
+        otherUserId
       );
-      return {
-        ...msg,
-        content: plaintext,
-        isEncrypted: true
-      };
+
+      if (plaintext) {
+        return {
+          ...msg,
+          content: plaintext,
+          isEncrypted: true
+        };
+      }
     } catch (err) {
       console.warn('Failed to decrypt message payload:', err);
-      return msg;
     }
+
+    return msg;
   };
 
   const fetchConversations = async () => {
@@ -317,25 +320,20 @@ const MainApp = () => {
 
     if (otherUser && user?.id) {
       const recipientKeys = await getUserPublicKeys(otherUser.id);
-      if (recipientKeys && recipientKeys.publicEcdhKey) {
-        try {
-          const encResult = await cryptoService.encryptMessage(
-            user.id,
-            plainContent,
-            recipientKeys.publicEcdhKey
-          );
-          ciphertext = encResult.ciphertext;
-          iv = encResult.iv;
-          signature = encResult.signature;
-        } catch (err) {
-          console.warn('Encryption failed, sending unencrypted fallback:', err);
-          fallbackContent = plainContent;
-        }
-      } else {
-        fallbackContent = plainContent;
+      try {
+        const encResult = await cryptoService.encryptMessage(
+          user.id,
+          plainContent,
+          recipientKeys?.publicEcdhKey,
+          activeConversation.id,
+          otherUser.id
+        );
+        ciphertext = encResult.ciphertext;
+        iv = encResult.iv;
+        signature = encResult.signature;
+      } catch (err) {
+        console.warn('Encryption fallback:', err);
       }
-    } else {
-      fallbackContent = plainContent;
     }
 
     const pendingMsg = {

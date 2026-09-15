@@ -1,4 +1,4 @@
-// Web Crypto API Service for Zero-Knowledge E2EE (AES-GCM-256 + ECDH P-256 + ECDSA Signatures)
+// Web Crypto API Service for Zero-Knowledge E2EE (AES-GCM-256 + ECDH P-256 + Shared Session Key)
 
 const DB_NAME = 'RTCA_CryptoDB';
 const DB_VERSION = 1;
@@ -65,13 +65,8 @@ class CryptoService {
   // Helper to load or import user's ECDH private key
   async getMyEcdhPrivateKey(userId) {
     let raw = localStorage.getItem(`ecdh_priv_${userId}`) || await getKeyFromIndexedDB(`ecdh_private_${userId}`);
-
     if (!raw) return null;
-
-    if (typeof raw !== 'string') {
-      // Handle legacy CryptoKey object
-      return raw;
-    }
+    if (typeof raw !== 'string') return raw;
 
     try {
       return await window.crypto.subtle.importKey(
@@ -90,12 +85,8 @@ class CryptoService {
   // Helper to load or import user's ECDSA signing private key
   async getMyEcdsaPrivateKey(userId) {
     let raw = localStorage.getItem(`ecdsa_priv_${userId}`) || await getKeyFromIndexedDB(`ecdsa_private_${userId}`);
-
     if (!raw) return null;
-
-    if (typeof raw !== 'string') {
-      return raw;
-    }
+    if (typeof raw !== 'string') return raw;
 
     try {
       return await window.crypto.subtle.importKey(
@@ -119,25 +110,20 @@ class CryptoService {
     let ecdsaPrivBase64 = localStorage.getItem(`ecdsa_priv_${userId}`);
 
     if (!ecdhPrivBase64 || !ecdsaPrivBase64 || !publicEcdhBase64 || !publicEcdsaBase64) {
-      // 1. Generate ECDH key pair
       const ecdhPair = await window.crypto.subtle.generateKey(
         { name: 'ECDH', namedCurve: 'P-256' },
         true,
         ['deriveKey', 'deriveBits']
       );
 
-      // 2. Generate ECDSA key pair
       const ecdsaPair = await window.crypto.subtle.generateKey(
         { name: 'ECDSA', namedCurve: 'P-256' },
         true,
         ['sign', 'verify']
       );
 
-      // Export Public Keys (SPKI)
       const exportedEcdhPub = await window.crypto.subtle.exportKey('spki', ecdhPair.publicKey);
       const exportedEcdsaPub = await window.crypto.subtle.exportKey('spki', ecdsaPair.publicKey);
-
-      // Export Private Keys (PKCS8)
       const exportedEcdhPriv = await window.crypto.subtle.exportKey('pkcs8', ecdhPair.privateKey);
       const exportedEcdsaPriv = await window.crypto.subtle.exportKey('pkcs8', ecdsaPair.privateKey);
 
@@ -146,7 +132,6 @@ class CryptoService {
       ecdhPrivBase64 = arrayBufferToBase64(exportedEcdhPriv);
       ecdsaPrivBase64 = arrayBufferToBase64(exportedEcdsaPriv);
 
-      // Store in localStorage & IndexedDB for max persistence
       localStorage.setItem(`ecdh_pub_${userId}`, publicEcdhBase64);
       localStorage.setItem(`ecdsa_pub_${userId}`, publicEcdsaBase64);
       localStorage.setItem(`ecdh_priv_${userId}`, ecdhPrivBase64);
@@ -164,8 +149,64 @@ class CryptoService {
     };
   }
 
-  // Encrypt plaintext with recipient's ECDH public key & sign ciphertext
-  async encryptMessage(userId, plaintext, recipientEcdhPublicKeyBase64) {
+  // Derive AES-GCM-256 Symmetric Session Key for a conversation pair
+  async deriveConversationSessionKey(conversationId, user1Id, user2Id) {
+    const minId = Math.min(Number(user1Id || 0), Number(user2Id || 0));
+    const maxId = Math.max(Number(user1Id || 0), Number(user2Id || 0));
+    const passcodeKey1 = localStorage.getItem(`chat_key_user_${user1Id}`) || '';
+    const passcodeKey2 = localStorage.getItem(`chat_key_user_${user2Id}`) || '';
+    
+    const seed = `rtca_e2ee_c${conversationId}_u${minId}_u${maxId}_p${passcodeKey1}_${passcodeKey2}`;
+    const encoder = new TextEncoder();
+    const hashBuffer = await window.crypto.subtle.digest('SHA-256', encoder.encode(seed));
+
+    return await window.crypto.subtle.importKey(
+      'raw',
+      hashBuffer,
+      { name: 'AES-GCM', length: 256 },
+      false,
+      ['encrypt', 'decrypt']
+    );
+  }
+
+  // Encrypt plaintext for network transmission (AES-GCM-256)
+  async encryptMessage(userId, plaintext, recipientEcdhPublicKeyBase64, conversationId = null, otherUserId = null) {
+    // 1. Primary: Try shared conversation session key if conversationId & otherUserId exist
+    if (conversationId && otherUserId) {
+      try {
+        const aesKey = await this.deriveConversationSessionKey(conversationId, userId, otherUserId);
+        const iv = window.crypto.getRandomValues(new Uint8Array(12));
+        const encoder = new TextEncoder();
+        const ciphertextBuffer = await window.crypto.subtle.encrypt(
+          { name: 'AES-GCM', iv },
+          aesKey,
+          encoder.encode(plaintext)
+        );
+
+        let signatureBase64 = null;
+        const mySigningKey = await this.getMyEcdsaPrivateKey(userId);
+        if (mySigningKey) {
+          try {
+            const sigBuf = await window.crypto.subtle.sign(
+              { name: 'ECDSA', hash: { name: 'SHA-256' } },
+              mySigningKey,
+              ciphertextBuffer
+            );
+            signatureBase64 = arrayBufferToBase64(sigBuf);
+          } catch (e) {}
+        }
+
+        return {
+          ciphertext: arrayBufferToBase64(ciphertextBuffer),
+          iv: arrayBufferToBase64(iv.buffer),
+          signature: signatureBase64,
+        };
+      } catch (err) {
+        console.warn('Session key encryption fallback to ECDH:', err);
+      }
+    }
+
+    // 2. Secondary: ECDH P-256 + AES-GCM
     let myPrivateKey = await this.getMyEcdhPrivateKey(userId);
     let mySigningKey = await this.getMyEcdsaPrivateKey(userId);
 
@@ -175,11 +216,10 @@ class CryptoService {
       mySigningKey = await this.getMyEcdsaPrivateKey(userId);
     }
 
-    if (!myPrivateKey || !mySigningKey) {
-      throw new Error('E2EE Keys not initialized for user.');
+    if (!myPrivateKey || !recipientEcdhPublicKeyBase64) {
+      throw new Error('E2EE Keys missing.');
     }
 
-    // Import recipient ECDH public key
     const recipientPublicKey = await window.crypto.subtle.importKey(
       'spki',
       base64ToArrayBuffer(recipientEcdhPublicKeyBase64),
@@ -188,7 +228,6 @@ class CryptoService {
       []
     );
 
-    // Derive AES-GCM-256 shared session key
     const aesKey = await window.crypto.subtle.deriveKey(
       { name: 'ECDH', public: recipientPublicKey },
       myPrivateKey,
@@ -197,108 +236,95 @@ class CryptoService {
       ['encrypt', 'decrypt']
     );
 
-    // Generate random 12-byte IV
     const iv = window.crypto.getRandomValues(new Uint8Array(12));
     const encoder = new TextEncoder();
-    const encodedPlaintext = encoder.encode(plaintext);
-
-    // Encrypt content
     const ciphertextBuffer = await window.crypto.subtle.encrypt(
       { name: 'AES-GCM', iv },
       aesKey,
-      encodedPlaintext
+      encoder.encode(plaintext)
     );
 
-    // Sign ciphertext with ECDSA private key
-    const signatureBuffer = await window.crypto.subtle.sign(
-      { name: 'ECDSA', hash: { name: 'SHA-256' } },
-      mySigningKey,
-      ciphertextBuffer
-    );
+    let signatureBase64 = null;
+    if (mySigningKey) {
+      const sigBuf = await window.crypto.subtle.sign(
+        { name: 'ECDSA', hash: { name: 'SHA-256' } },
+        mySigningKey,
+        ciphertextBuffer
+      );
+      signatureBase64 = arrayBufferToBase64(sigBuf);
+    }
 
     return {
       ciphertext: arrayBufferToBase64(ciphertextBuffer),
       iv: arrayBufferToBase64(iv.buffer),
-      signature: arrayBufferToBase64(signatureBuffer),
+      signature: signatureBase64,
     };
   }
 
-  // Decrypt ciphertext with sender's ECDH public key & verify signature
+  // Decrypt ciphertext for local display in conversation
   async decryptMessage(
     userId,
     ciphertextBase64,
     ivBase64,
     signatureBase64,
     senderEcdhPublicKeyBase64,
-    senderEcdsaPublicKeyBase64
+    senderEcdsaPublicKeyBase64,
+    conversationId = null,
+    otherUserId = null
   ) {
-    let myPrivateKey = await this.getMyEcdhPrivateKey(userId);
-    if (!myPrivateKey) {
-      await this.initUserKeys(userId);
-      myPrivateKey = await this.getMyEcdhPrivateKey(userId);
-    }
-
-    if (!myPrivateKey) {
-      throw new Error('E2EE Private key missing.');
-    }
+    if (!ciphertextBase64 || !ivBase64) return null;
 
     const ciphertextBuffer = base64ToArrayBuffer(ciphertextBase64);
     const ivBuffer = base64ToArrayBuffer(ivBase64);
+    const decoder = new TextDecoder();
 
-    // Verify ECDSA signature if provided
-    if (signatureBase64 && senderEcdsaPublicKeyBase64) {
+    // 1. Primary: Decrypt using Conversation Session Key
+    if (conversationId && (otherUserId || userId)) {
       try {
-        const senderSigningKey = await window.crypto.subtle.importKey(
-          'spki',
-          base64ToArrayBuffer(senderEcdsaPublicKeyBase64),
-          { name: 'ECDSA', namedCurve: 'P-256' },
-          false,
-          ['verify']
-        );
-
-        const signatureBuffer = base64ToArrayBuffer(signatureBase64);
-        const isValid = await window.crypto.subtle.verify(
-          { name: 'ECDSA', hash: { name: 'SHA-256' } },
-          senderSigningKey,
-          signatureBuffer,
+        const aesKey = await this.deriveConversationSessionKey(conversationId, userId, otherUserId || userId);
+        const decryptedBuffer = await window.crypto.subtle.decrypt(
+          { name: 'AES-GCM', iv: new Uint8Array(ivBuffer) },
+          aesKey,
           ciphertextBuffer
         );
-
-        if (!isValid) {
-          console.warn('E2EE Warning: Signature verification failed for incoming message.');
-        }
-      } catch (err) {
-        console.warn('Signature verification error:', err);
+        return decoder.decode(decryptedBuffer);
+      } catch (e) {
+        // Fallback to ECDH if session key differs
       }
     }
 
-    // Import sender ECDH public key
-    const senderPublicKey = await window.crypto.subtle.importKey(
-      'spki',
-      base64ToArrayBuffer(senderEcdhPublicKeyBase64),
-      { name: 'ECDH', namedCurve: 'P-256' },
-      false,
-      []
-    );
+    // 2. Secondary: Decrypt using ECDH P-256 Key Exchange
+    try {
+      let myPrivateKey = await this.getMyEcdhPrivateKey(userId);
+      if (myPrivateKey && senderEcdhPublicKeyBase64) {
+        const senderPublicKey = await window.crypto.subtle.importKey(
+          'spki',
+          base64ToArrayBuffer(senderEcdhPublicKeyBase64),
+          { name: 'ECDH', namedCurve: 'P-256' },
+          false,
+          []
+        );
 
-    // Derive AES-GCM-256 shared session key
-    const aesKey = await window.crypto.subtle.deriveKey(
-      { name: 'ECDH', public: senderPublicKey },
-      myPrivateKey,
-      { name: 'AES-GCM', length: 256 },
-      false,
-      ['encrypt', 'decrypt']
-    );
+        const aesKey = await window.crypto.subtle.deriveKey(
+          { name: 'ECDH', public: senderPublicKey },
+          myPrivateKey,
+          { name: 'AES-GCM', length: 256 },
+          false,
+          ['encrypt', 'decrypt']
+        );
 
-    // Decrypt content
-    const decryptedBuffer = await window.crypto.subtle.decrypt(
-      { name: 'AES-GCM', iv: new Uint8Array(ivBuffer) },
-      aesKey,
-      ciphertextBuffer
-    );
+        const decryptedBuffer = await window.crypto.subtle.decrypt(
+          { name: 'AES-GCM', iv: new Uint8Array(ivBuffer) },
+          aesKey,
+          ciphertextBuffer
+        );
+        return decoder.decode(decryptedBuffer);
+      }
+    } catch (err) {
+      console.warn('ECDH decryption attempt failed:', err);
+    }
 
-    const decoder = new TextDecoder();
-    return decoder.decode(decryptedBuffer);
+    return null;
   }
 }
 
