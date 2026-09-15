@@ -53,7 +53,6 @@ class WebSocketService {
 
     const topic = `/topic/conversation.${conversationId}`;
 
-    // Unsubscribe from existing topic subscription if any
     if (this.activeSubscriptions.has(topic)) {
       this.activeSubscriptions.get(topic).unsubscribe();
       this.activeSubscriptions.delete(topic);
@@ -114,6 +113,30 @@ class WebSocketService {
           onTypingReceived(payload);
         } catch (e) {
           console.error('Failed to parse typing event:', e);
+        }
+      }
+    });
+
+    this.activeSubscriptions.set(topic, subscription);
+    return subscription;
+  }
+
+  subscribeToUserNotifications(userId, onNotificationReceived) {
+    if (!this.client || !this.client.active || !userId) return null;
+    const topic = `/topic/user.${userId}.notifications`;
+
+    if (this.activeSubscriptions.has(topic)) {
+      this.activeSubscriptions.get(topic).unsubscribe();
+      this.activeSubscriptions.delete(topic);
+    }
+
+    const subscription = this.client.subscribe(topic, (message) => {
+      if (message.body) {
+        try {
+          const payload = JSON.parse(message.body);
+          onNotificationReceived(payload);
+        } catch (e) {
+          console.error('Failed to parse user notification:', e);
         }
       }
     });

@@ -1,10 +1,25 @@
 import React from 'react';
 import { Header } from './Header';
 
-export const ChatLayout = ({ sidebarContent, mainContent, showMobileSidebar = true }) => {
+export const ChatLayout = ({
+  sidebarContent,
+  mainContent,
+  showMobileSidebar = true,
+  pendingRequests = [],
+  notifications = [],
+  onAcceptRequestClick,
+  onNotificationClick,
+  onClearNotifications
+}) => {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', width: '100vw', overflow: 'hidden' }}>
-      <Header />
+      <Header
+        pendingRequests={pendingRequests}
+        notifications={notifications}
+        onAcceptRequestClick={onAcceptRequestClick}
+        onNotificationClick={onNotificationClick}
+        onClearNotifications={onClearNotifications}
+      />
       <div style={{ display: 'flex', flex: 1, height: 'calc(100vh - 64px)', overflow: 'hidden', position: 'relative' }}>
         {/* Sidebar Panel */}
         <aside

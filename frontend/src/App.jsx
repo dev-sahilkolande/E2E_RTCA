@@ -6,6 +6,8 @@ import { ChatLayout } from './components/chat/ChatLayout';
 import { UserSearch } from './components/chat/UserSearch';
 import { ConversationList } from './components/chat/ConversationList';
 import { ConversationView } from './components/chat/ConversationView';
+import { SendChatRequestModal } from './components/chat/SendChatRequestModal';
+import { AcceptChatRequestModal } from './components/chat/AcceptChatRequestModal';
 import api from './services/api';
 import { websocketService } from './services/websocketService';
 import { cryptoService } from './services/cryptoService';
@@ -26,6 +28,12 @@ const MainApp = () => {
   const [messages, setMessages] = useState([]);
   const [loadingMessages, setLoadingMessages] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
+
+  // Pending Chat Requests & Notifications State
+  const [pendingRequests, setPendingRequests] = useState([]);
+  const [notifications, setNotifications] = useState([]);
+  const [selectedUserForRequest, setSelectedUserForRequest] = useState(null);
+  const [selectedRequestForAccept, setSelectedRequestForAccept] = useState(null);
 
   // Real-Time Presence & Typing State
   const [onlineUserIds, setOnlineUserIds] = useState(new Set());
@@ -107,52 +115,6 @@ const MainApp = () => {
     }
   };
 
-  // Fetch active user conversations & initialize WebSocket/Presence on mount / login
-  useEffect(() => {
-    if (isAuthenticated && token) {
-      fetchConversations();
-
-      // Fetch initial list of online user IDs
-      api.get('/presence')
-        .then((res) => {
-          if (res.data && res.data.success && Array.isArray(res.data.data)) {
-            setOnlineUserIds(new Set(res.data.data));
-          }
-        })
-        .catch((err) => console.warn('Failed to fetch initial presence list:', err));
-
-      // Initialize STOMP WebSocket connection
-      websocketService.connect(
-        token,
-        () => {
-          setIsConnected(true);
-          // Subscribe to global presence broadcasts
-          websocketService.subscribeToPresence((event) => {
-            if (event && event.userId) {
-              setOnlineUserIds((prev) => {
-                const next = new Set(prev);
-                if (event.status === 'ONLINE') {
-                  next.add(event.userId);
-                } else {
-                  next.delete(event.userId);
-                }
-                return next;
-              });
-            }
-          });
-        },
-        () => setIsConnected(false)
-      );
-    } else {
-      websocketService.disconnect();
-      setIsConnected(false);
-    }
-
-    return () => {
-      websocketService.disconnect();
-    };
-  }, [isAuthenticated, token]);
-
   const fetchConversations = async () => {
     setLoadingConversations(true);
     try {
@@ -167,6 +129,79 @@ const MainApp = () => {
     }
   };
 
+  const fetchPendingRequests = async () => {
+    try {
+      const res = await api.get('/chat-requests/pending');
+      if (res.data && res.data.success) {
+        setPendingRequests(res.data.data);
+      }
+    } catch (err) {
+      console.warn('Failed to fetch pending chat requests:', err);
+    }
+  };
+
+  // Initialize WebSockets, Presence & Notifications on login
+  useEffect(() => {
+    if (isAuthenticated && token && user?.id) {
+      fetchConversations();
+      fetchPendingRequests();
+
+      // Fetch initial presence
+      api.get('/presence')
+        .then((res) => {
+          if (res.data && res.data.success && Array.isArray(res.data.data)) {
+            setOnlineUserIds(new Set(res.data.data));
+          }
+        })
+        .catch((err) => console.warn('Failed to fetch initial presence list:', err));
+
+      // Connect WebSockets
+      websocketService.connect(
+        token,
+        () => {
+          setIsConnected(true);
+
+          // Presence subscription
+          websocketService.subscribeToPresence((event) => {
+            if (event && event.userId) {
+              setOnlineUserIds((prev) => {
+                const next = new Set(prev);
+                if (event.status === 'ONLINE') {
+                  next.add(event.userId);
+                } else {
+                  next.delete(event.userId);
+                }
+                return next;
+              });
+            }
+          });
+
+          // User notifications subscription
+          websocketService.subscribeToUserNotifications(user.id, (notification) => {
+            if (notification.type === 'CHAT_REQUEST') {
+              fetchPendingRequests();
+            }
+            if (notification.type === 'CHAT_REQUEST_ACCEPTED') {
+              fetchConversations();
+            }
+            if (notification.type === 'NEW_MESSAGE') {
+              fetchConversations();
+            }
+            setNotifications((prev) => [notification, ...prev]);
+          });
+        },
+        () => setIsConnected(false)
+      );
+    } else {
+      websocketService.disconnect();
+      setIsConnected(false);
+    }
+
+    return () => {
+      websocketService.disconnect();
+    };
+  }, [isAuthenticated, token, user?.id]);
+
   // Load chat history & subscribe to STOMP topics when activeConversation changes
   useEffect(() => {
     if (!activeConversation || !isAuthenticated) return;
@@ -174,7 +209,6 @@ const MainApp = () => {
     setIsOtherUserTyping(false);
     const otherUser = getOtherParticipant(activeConversation.participants, user?.id);
 
-    // 1. Fetch persistent chat history from REST API
     const fetchHistory = async () => {
       setLoadingMessages(true);
       try {
@@ -195,7 +229,6 @@ const MainApp = () => {
 
     fetchHistory();
 
-    // 2. Subscribe to STOMP real-time topic /topic/conversation.{id}
     const subscription = websocketService.subscribeToConversation(
       activeConversation.id,
       async (incomingMsg) => {
@@ -215,12 +248,10 @@ const MainApp = () => {
           return [...prevMessages, processedMsg];
         });
 
-        // Refresh conversation sidebar
         fetchConversations();
       }
     );
 
-    // 3. Subscribe to STOMP typing indicators topic /topic/conversation.{id}.typing
     const typingSub = websocketService.subscribeToTyping(
       activeConversation.id,
       (typingEvent) => {
@@ -231,16 +262,12 @@ const MainApp = () => {
     );
 
     return () => {
-      if (subscription) {
-        subscription.unsubscribe();
-      }
-      if (typingSub) {
-        typingSub.unsubscribe();
-      }
+      if (subscription) subscription.unsubscribe();
+      if (typingSub) typingSub.unsubscribe();
     };
   }, [activeConversation, isAuthenticated, user]);
 
-  // Debounced User Search
+  // User search debounce
   useEffect(() => {
     if (!searchQuery.trim()) {
       setSearchResults([]);
@@ -265,20 +292,11 @@ const MainApp = () => {
     return () => clearTimeout(timer);
   }, [searchQuery]);
 
-  // Handle selecting a user from search -> Create or open direct conversation
-  const handleSelectUser = async (targetUser) => {
-    try {
-      const res = await api.post('/conversations', { targetUserId: targetUser.id });
-      if (res.data && res.data.success) {
-        const conv = res.data.data;
-        setActiveConversation(conv);
-        setSearchQuery('');
-        setSearchResults([]);
-        fetchConversations();
-      }
-    } catch (err) {
-      console.error('Failed to open/create conversation:', err);
-    }
+  // When clicking on a user in search -> open Chat Request Modal
+  const handleSelectUser = (targetUser) => {
+    setSelectedUserForRequest(targetUser);
+    setSearchQuery('');
+    setSearchResults([]);
   };
 
   const handleTyping = (isTyping) => {
@@ -286,7 +304,6 @@ const MainApp = () => {
     websocketService.sendTypingIndicator(activeConversation.id, isTyping);
   };
 
-  // Real-time message publish via STOMP (with ECDH + AES-GCM-256 E2EE)
   const handleSendMessage = async (content) => {
     if (!activeConversation || !content.trim()) return;
 
@@ -321,7 +338,6 @@ const MainApp = () => {
       fallbackContent = plainContent;
     }
 
-    // Optimistic pending message preview
     const pendingMsg = {
       id: `pending-${Date.now()}`,
       conversationId: activeConversation.id,
@@ -338,7 +354,6 @@ const MainApp = () => {
 
     setMessages((prev) => [...prev, pendingMsg]);
 
-    // Publish via STOMP WebSocket
     const sent = websocketService.sendMessage(
       activeConversation.id,
       fallbackContent,
@@ -354,6 +369,17 @@ const MainApp = () => {
     }
   };
 
+  const handleNotificationClick = (item) => {
+    if (item.conversationId) {
+      const targetConv = conversations.find((c) => c.id === item.conversationId);
+      if (targetConv) {
+        setActiveConversation(targetConv);
+      } else {
+        fetchConversations();
+      }
+    }
+  };
+
   if (!isAuthenticated) {
     if (currentScreen === 'register') {
       return <RegisterPage onNavigateLogin={() => setCurrentScreen('login')} />;
@@ -362,44 +388,74 @@ const MainApp = () => {
   }
 
   return (
-    <ChatLayout
-      sidebarContent={
-        <>
-          <UserSearch
-            searchQuery={searchQuery}
-            onSearchChange={setSearchQuery}
-            onSearchSubmit={() => {}}
-            searchResults={searchResults}
-            loading={searching}
-            onSelectUser={handleSelectUser}
-            onClearSearch={() => setSearchQuery('')}
-          />
-          <ConversationList
-            conversations={conversations}
-            activeConversationId={activeConversation?.id}
-            onSelectConversation={(conv) => {
-              setActiveConversation(conv);
-              setIsOtherUserTyping(false);
-            }}
-            loading={loadingConversations}
+    <>
+      <ChatLayout
+        pendingRequests={pendingRequests}
+        notifications={notifications}
+        onAcceptRequestClick={(req) => setSelectedRequestForAccept(req)}
+        onNotificationClick={handleNotificationClick}
+        onClearNotifications={() => setNotifications([])}
+        sidebarContent={
+          <>
+            <UserSearch
+              searchQuery={searchQuery}
+              onSearchChange={setSearchQuery}
+              onSearchSubmit={() => {}}
+              searchResults={searchResults}
+              loading={searching}
+              onSelectUser={handleSelectUser}
+              onClearSearch={() => setSearchQuery('')}
+            />
+            <ConversationList
+              conversations={conversations}
+              activeConversationId={activeConversation?.id}
+              onSelectConversation={(conv) => {
+                setActiveConversation(conv);
+                setIsOtherUserTyping(false);
+              }}
+              loading={loadingConversations}
+              currentUserId={user?.id}
+              onlineUserIds={onlineUserIds}
+            />
+          </>
+        }
+        mainContent={
+          <ConversationView
+            activeConversation={activeConversation}
+            messages={messages}
             currentUserId={user?.id}
-            onlineUserIds={onlineUserIds}
+            onSendMessage={handleSendMessage}
+            onTyping={handleTyping}
+            isOtherUserTyping={isOtherUserTyping}
+            loadingMessages={loadingMessages}
+            isConnected={isConnected}
           />
-        </>
-      }
-      mainContent={
-        <ConversationView
-          activeConversation={activeConversation}
-          messages={messages}
-          currentUserId={user?.id}
-          onSendMessage={handleSendMessage}
-          onTyping={handleTyping}
-          isOtherUserTyping={isOtherUserTyping}
-          loadingMessages={loadingMessages}
-          isConnected={isConnected}
+        }
+      />
+
+      {/* Send Chat Request Modal */}
+      {selectedUserForRequest && (
+        <SendChatRequestModal
+          targetUser={selectedUserForRequest}
+          onClose={() => setSelectedUserForRequest(null)}
+          onRequestSent={() => fetchPendingRequests()}
         />
-      }
-    />
+      )}
+
+      {/* Accept Chat Request Modal */}
+      {selectedRequestForAccept && (
+        <AcceptChatRequestModal
+          requestItem={selectedRequestForAccept}
+          onClose={() => setSelectedRequestForAccept(null)}
+          onRequestAccepted={(newConv) => {
+            fetchConversations();
+            fetchPendingRequests();
+            if (newConv) setActiveConversation(newConv);
+          }}
+          onRequestRejected={() => fetchPendingRequests()}
+        />
+      )}
+    </>
   );
 };
 

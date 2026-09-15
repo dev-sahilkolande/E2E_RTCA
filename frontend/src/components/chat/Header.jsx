@@ -1,10 +1,17 @@
 import React from 'react';
-import { MessageSquare, LogOut, User } from 'lucide-react';
+import { MessageSquare, LogOut } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { Avatar } from '../common/Avatar';
 import { Button } from '../common/Button';
+import { NotificationBell } from '../common/NotificationBell';
 
-export const Header = () => {
+export const Header = ({
+  pendingRequests = [],
+  notifications = [],
+  onAcceptRequestClick,
+  onNotificationClick,
+  onClearNotifications
+}) => {
   const { user, logout } = useAuth();
 
   return (
@@ -43,6 +50,15 @@ export const Header = () => {
 
       {user && (
         <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+          {/* Real-time Notification Bell */}
+          <NotificationBell
+            pendingRequests={pendingRequests}
+            notifications={notifications}
+            onAcceptRequestClick={onAcceptRequestClick}
+            onNotificationClick={onNotificationClick}
+            onClearNotifications={onClearNotifications}
+          />
+
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
             <Avatar name={user.username} size="sm" online />
             <div style={{ display: 'flex', flexDirection: 'column' }}>

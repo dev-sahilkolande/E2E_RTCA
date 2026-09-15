@@ -1,9 +1,10 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { Avatar } from '../common/Avatar';
 import { MessageList } from './MessageList';
 import { MessageComposer } from './MessageComposer';
 import { EmptyState } from '../common/EmptyState';
-import { MessageSquare, ArrowLeft, Lock } from 'lucide-react';
+import { MessageSquare, ArrowLeft, Lock, Unlock, Key } from 'lucide-react';
+import { LockConversationModal } from './LockConversationModal';
 
 export const ConversationView = ({
   activeConversation,
@@ -16,19 +17,32 @@ export const ConversationView = ({
   onBackMobile,
   isConnected = true
 }) => {
+  const [showLockModal, setShowLockModal] = useState(false);
+  const [isLocked, setIsLocked] = useState(false);
+  const [unlockInput, setUnlockInput] = useState('');
+  const [unlockError, setUnlockError] = useState('');
+
+  useEffect(() => {
+    if (activeConversation) {
+      const lockedState = localStorage.getItem(`chat_locked_${activeConversation.id}`) === 'true';
+      setIsLocked(lockedState);
+      setUnlockInput('');
+      setUnlockError('');
+    }
+  }, [activeConversation]);
+
   if (!activeConversation) {
     return (
       <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: 'var(--bg-dark)' }}>
         <EmptyState
           icon={MessageSquare}
           title="Select a Conversation"
-          description="Choose an existing conversation from the list or search for a registered user to start messaging."
+          description="Choose an existing conversation from the list or search for a registered user to send a private chat request."
         />
       </div>
     );
   }
 
-  // Safely extract other participant (handles both direct UserDto and nested participant.user objects)
   const getOtherParticipant = (participants, userId) => {
     if (!participants || !Array.isArray(participants)) return null;
     for (const p of participants) {
@@ -43,6 +57,19 @@ export const ConversationView = ({
   const otherParticipant = getOtherParticipant(activeConversation.participants, currentUserId);
   const displayName = otherParticipant ? otherParticipant.username : 'Private Chat';
   const displayEmail = otherParticipant ? otherParticipant.email : '';
+
+  const handleUnlockSubmit = (e) => {
+    e.preventDefault();
+    const savedPin = localStorage.getItem(`lock_pin_${activeConversation.id}`);
+    if (savedPin && savedPin !== unlockInput.trim()) {
+      setUnlockError('Incorrect lock passcode / PIN.');
+      return;
+    }
+    localStorage.setItem(`chat_locked_${activeConversation.id}`, 'false');
+    setIsLocked(false);
+    setUnlockInput('');
+    setUnlockError('');
+  };
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-dark)', position: 'relative' }}>
@@ -95,7 +122,29 @@ export const ConversationView = ({
           </div>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          {/* Lock Conversation Toggle Button */}
+          <button
+            onClick={() => setShowLockModal(true)}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              backgroundColor: isLocked ? 'rgba(239, 68, 68, 0.15)' : 'rgba(124, 58, 237, 0.15)',
+              border: isLocked ? '1px solid rgba(239, 68, 68, 0.3)' : '1px solid rgba(124, 58, 237, 0.3)',
+              color: isLocked ? '#f87171' : 'var(--primary-light)',
+              padding: '6px 12px',
+              borderRadius: '8px',
+              fontSize: '0.78rem',
+              fontWeight: '600',
+              cursor: 'pointer'
+            }}
+            title={isLocked ? 'Conversation Locked - Click to Unlock' : 'Lock Conversation with Private Passcode'}
+          >
+            {isLocked ? <Lock size={14} /> : <Unlock size={14} />}
+            {isLocked ? 'Locked' : 'Lock Chat'}
+          </button>
+
           <span
             style={{
               fontSize: '0.75rem',
@@ -113,42 +162,145 @@ export const ConversationView = ({
             <Lock size={12} />
             E2E Encrypted
           </span>
-
-          <span
-            style={{
-              fontSize: '0.75rem',
-              color: isConnected ? 'var(--success)' : 'var(--warning)',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px'
-            }}
-          >
-            <span
-              style={{
-                width: '8px',
-                height: '8px',
-                borderRadius: '50%',
-                backgroundColor: isConnected ? 'var(--success)' : 'var(--warning)'
-              }}
-            />
-            {isConnected ? 'Connected' : 'Reconnecting...'}
-          </span>
         </div>
       </div>
 
-      {/* Message List */}
-      <MessageList
-        messages={messages}
-        currentUserId={currentUserId}
-        loading={loadingMessages}
-      />
+      {/* Main Body (Locked Overlay or Message View) */}
+      {isLocked ? (
+        <div
+          style={{
+            flex: 1,
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '24px',
+            backgroundColor: 'var(--bg-dark)'
+          }}
+        >
+          <div
+            style={{
+              maxWidth: '360px',
+              width: '100%',
+              backgroundColor: 'var(--bg-elevated, #1e1e2e)',
+              border: '1px solid var(--border-color, #2f2f45)',
+              borderRadius: '16px',
+              padding: '28px',
+              textAlign: 'center',
+              boxShadow: '0 10px 30px rgba(0, 0, 0, 0.5)'
+            }}
+          >
+            <div
+              style={{
+                width: '56px',
+                height: '56px',
+                borderRadius: '50%',
+                backgroundColor: 'rgba(239, 68, 68, 0.15)',
+                color: '#f87171',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                margin: '0 auto 16px auto'
+              }}
+            >
+              <Lock size={28} />
+            </div>
 
-      {/* Message Composer */}
-      <MessageComposer
-        onSendMessage={onSendMessage}
-        onTyping={onTyping}
-        disabled={!isConnected}
-      />
+            <h3 style={{ color: '#fff', fontSize: '1.1rem', fontWeight: '600', marginBottom: '8px' }}>
+              Conversation Locked
+            </h3>
+            <p style={{ color: 'var(--text-dim)', fontSize: '0.82rem', marginBottom: '20px' }}>
+              This private conversation with {displayName} is locked with a passcode.
+            </p>
+
+            <form onSubmit={handleUnlockSubmit}>
+              {unlockError && (
+                <div
+                  style={{
+                    padding: '8px 12px',
+                    backgroundColor: 'rgba(239, 68, 68, 0.15)',
+                    border: '1px solid rgba(239, 68, 68, 0.3)',
+                    borderRadius: '8px',
+                    color: '#f87171',
+                    fontSize: '0.8rem',
+                    marginBottom: '12px'
+                  }}
+                >
+                  {unlockError}
+                </div>
+              )}
+
+              <input
+                type="password"
+                value={unlockInput}
+                onChange={(e) => setUnlockInput(e.target.value)}
+                placeholder="Enter passcode to unlock..."
+                required
+                autoFocus
+                style={{
+                  width: '100%',
+                  padding: '10px 14px',
+                  backgroundColor: 'var(--bg-dark, #12121e)',
+                  border: '1px solid var(--border-color, #2f2f45)',
+                  borderRadius: '10px',
+                  color: '#fff',
+                  fontSize: '0.9rem',
+                  outline: 'none',
+                  marginBottom: '16px'
+                }}
+              />
+
+              <button
+                type="submit"
+                style={{
+                  width: '100%',
+                  padding: '10px',
+                  backgroundColor: '#10b981',
+                  border: 'none',
+                  borderRadius: '10px',
+                  color: '#fff',
+                  fontSize: '0.88rem',
+                  fontWeight: '600',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '6px'
+                }}
+              >
+                <Unlock size={16} />
+                Unlock Conversation
+              </button>
+            </form>
+          </div>
+        </div>
+      ) : (
+        <>
+          {/* Message List */}
+          <MessageList
+            messages={messages}
+            currentUserId={currentUserId}
+            loading={loadingMessages}
+          />
+
+          {/* Message Composer */}
+          <MessageComposer
+            onSendMessage={onSendMessage}
+            onTyping={onTyping}
+            disabled={!isConnected}
+          />
+        </>
+      )}
+
+      {/* Lock Conversation Modal */}
+      {showLockModal && (
+        <LockConversationModal
+          conversationId={activeConversation.id}
+          isCurrentlyLocked={isLocked}
+          onClose={() => setShowLockModal(false)}
+          onLockStateChanged={(newLockedState) => setIsLocked(newLockedState)}
+        />
+      )}
     </div>
   );
 };
