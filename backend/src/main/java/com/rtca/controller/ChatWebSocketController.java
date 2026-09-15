@@ -61,4 +61,22 @@ public class ChatWebSocketController {
             logger.error("Failed to process and deliver real-time STOMP message: {}", e.getMessage());
         }
     }
+
+    @MessageMapping("/chat.typing")
+    public void handleTyping(@Payload com.rtca.dto.TypingEvent event, Principal principal) {
+        if (principal == null || event.getConversationId() == null) return;
+
+        UserPrincipal currentUser = null;
+        if (principal instanceof UsernamePasswordAuthenticationToken token) {
+            currentUser = (UserPrincipal) token.getPrincipal();
+        }
+
+        if (currentUser == null) return;
+
+        event.setUserId(currentUser.getId());
+        event.setUsername(currentUser.getUsername());
+
+        String destination = "/topic/conversation." + event.getConversationId() + ".typing";
+        messagingTemplate.convertAndSend(destination, event);
+    }
 }

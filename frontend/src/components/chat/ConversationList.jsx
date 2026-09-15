@@ -9,7 +9,8 @@ export const ConversationList = ({
   activeConversationId,
   onSelectConversation,
   loading = false,
-  currentUserId
+  currentUserId,
+  onlineUserIds = new Set()
 }) => {
   if (loading) {
     return <LoadingSpinner text="Loading conversations..." />;
@@ -41,6 +42,7 @@ export const ConversationList = ({
       {conversations.map((conv) => {
         const otherParticipant = getOtherParticipant(conv.participants, currentUserId);
         const displayName = otherParticipant ? otherParticipant.username : 'Chat';
+        const isOnline = otherParticipant ? onlineUserIds.has(otherParticipant.id) : false;
         const isActive = conv.id === activeConversationId;
 
         return (
@@ -65,7 +67,7 @@ export const ConversationList = ({
               if (!isActive) e.currentTarget.style.backgroundColor = 'transparent';
             }}
           >
-            <Avatar name={displayName} size="md" />
+            <Avatar name={displayName} size="md" online={isOnline} />
             <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <span style={{ fontWeight: '600', fontSize: '0.9rem', color: 'var(--text-main)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>

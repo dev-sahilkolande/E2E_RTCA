@@ -74,6 +74,68 @@ class WebSocketService {
     return subscription;
   }
 
+  subscribeToPresence(onPresenceReceived) {
+    if (!this.client || !this.client.active) return null;
+    const topic = `/topic/presence`;
+
+    if (this.activeSubscriptions.has(topic)) {
+      this.activeSubscriptions.get(topic).unsubscribe();
+      this.activeSubscriptions.delete(topic);
+    }
+
+    const subscription = this.client.subscribe(topic, (message) => {
+      if (message.body) {
+        try {
+          const payload = JSON.parse(message.body);
+          onPresenceReceived(payload);
+        } catch (e) {
+          console.error('Failed to parse presence event:', e);
+        }
+      }
+    });
+
+    this.activeSubscriptions.set(topic, subscription);
+    return subscription;
+  }
+
+  subscribeToTyping(conversationId, onTypingReceived) {
+    if (!this.client || !this.client.active) return null;
+    const topic = `/topic/conversation.${conversationId}.typing`;
+
+    if (this.activeSubscriptions.has(topic)) {
+      this.activeSubscriptions.get(topic).unsubscribe();
+      this.activeSubscriptions.delete(topic);
+    }
+
+    const subscription = this.client.subscribe(topic, (message) => {
+      if (message.body) {
+        try {
+          const payload = JSON.parse(message.body);
+          onTypingReceived(payload);
+        } catch (e) {
+          console.error('Failed to parse typing event:', e);
+        }
+      }
+    });
+
+    this.activeSubscriptions.set(topic, subscription);
+    return subscription;
+  }
+
+  sendTypingIndicator(conversationId, isTyping) {
+    if (!this.client || !this.client.active) return false;
+
+    this.client.publish({
+      destination: '/app/chat.typing',
+      body: JSON.stringify({
+        conversationId,
+        isTyping,
+      }),
+    });
+
+    return true;
+  }
+
   sendMessage(conversationId, content, ciphertext = null, iv = null, signature = null) {
     if (!this.client || !this.client.active) {
       console.error('Cannot send STOMP message: Client disconnected.');

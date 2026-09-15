@@ -1,13 +1,31 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { Send } from 'lucide-react';
 import { Button } from '../common/Button';
 
-export const MessageComposer = ({ onSendMessage, disabled = false }) => {
+export const MessageComposer = ({ onSendMessage, onTyping, disabled = false }) => {
   const [content, setContent] = useState('');
+  const typingTimerRef = useRef(null);
+
+  const handleInputChange = (e) => {
+    const val = e.target.value;
+    setContent(val);
+
+    if (onTyping) {
+      onTyping(true);
+      if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+      typingTimerRef.current = setTimeout(() => {
+        onTyping(false);
+      }, 1500);
+    }
+  };
 
   const handleSubmit = (e) => {
     e.preventDefault();
     if (!content.trim() || disabled) return;
+
+    if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+    if (onTyping) onTyping(false);
+
     onSendMessage(content.trim());
     setContent('');
   };
@@ -36,7 +54,7 @@ export const MessageComposer = ({ onSendMessage, disabled = false }) => {
         className="input-field"
         placeholder="Type a private message..."
         value={content}
-        onChange={(e) => setContent(e.target.value)}
+        onChange={handleInputChange}
         onKeyDown={handleKeyDown}
         disabled={disabled}
         style={{ flex: 1, padding: '12px 16px', fontSize: '0.92rem' }}

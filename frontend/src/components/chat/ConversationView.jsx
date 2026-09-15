@@ -10,6 +10,8 @@ export const ConversationView = ({
   messages = [],
   currentUserId,
   onSendMessage,
+  onTyping,
+  isOtherUserTyping = false,
   loadingMessages = false,
   onBackMobile,
   isConnected = true
@@ -81,9 +83,15 @@ export const ConversationView = ({
             <span style={{ fontWeight: '600', fontSize: '0.98rem', color: 'var(--text-main)' }}>
               {displayName}
             </span>
-            <span style={{ fontSize: '0.75rem', color: 'var(--text-dim)' }}>
-              {displayEmail}
-            </span>
+            {isOtherUserTyping ? (
+              <span style={{ fontSize: '0.75rem', color: 'var(--primary-light)', fontStyle: 'italic', fontWeight: '500' }}>
+                typing...
+              </span>
+            ) : (
+              <span style={{ fontSize: '0.75rem', color: 'var(--text-dim)' }}>
+                {displayEmail}
+              </span>
+            )}
           </div>
         </div>
 
@@ -138,6 +146,7 @@ export const ConversationView = ({
       {/* Message Composer */}
       <MessageComposer
         onSendMessage={onSendMessage}
+        onTyping={onTyping}
         disabled={!isConnected}
       />
     </div>

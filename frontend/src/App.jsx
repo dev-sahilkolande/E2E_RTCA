@@ -27,6 +27,10 @@ const MainApp = () => {
   const [loadingMessages, setLoadingMessages] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
 
+  // Real-Time Presence & Typing State
+  const [onlineUserIds, setOnlineUserIds] = useState(new Set());
+  const [isOtherUserTyping, setIsOtherUserTyping] = useState(false);
+
   // Cache user public keys to optimize E2EE key lookups
   const userPublicKeyCache = useRef(new Map());
 
@@ -96,14 +100,40 @@ const MainApp = () => {
     }
   };
 
-  // Fetch active user conversations on mount / login
+  // Fetch active user conversations & initialize WebSocket/Presence on mount / login
   useEffect(() => {
     if (isAuthenticated && token) {
       fetchConversations();
+
+      // Fetch initial list of online user IDs
+      api.get('/presence')
+        .then((res) => {
+          if (res.data && res.data.success && Array.isArray(res.data.data)) {
+            setOnlineUserIds(new Set(res.data.data));
+          }
+        })
+        .catch((err) => console.warn('Failed to fetch initial presence list:', err));
+
       // Initialize STOMP WebSocket connection
       websocketService.connect(
         token,
-        () => setIsConnected(true),
+        () => {
+          setIsConnected(true);
+          // Subscribe to global presence broadcasts
+          websocketService.subscribeToPresence((event) => {
+            if (event && event.userId) {
+              setOnlineUserIds((prev) => {
+                const next = new Set(prev);
+                if (event.status === 'ONLINE') {
+                  next.add(event.userId);
+                } else {
+                  next.delete(event.userId);
+                }
+                return next;
+              });
+            }
+          });
+        },
         () => setIsConnected(false)
       );
     } else {
@@ -130,10 +160,11 @@ const MainApp = () => {
     }
   };
 
-  // Load chat history & subscribe to STOMP topic when activeConversation changes
+  // Load chat history & subscribe to STOMP topics when activeConversation changes
   useEffect(() => {
     if (!activeConversation || !isAuthenticated) return;
 
+    setIsOtherUserTyping(false);
     const otherUser = getOtherParticipant(activeConversation.participants, user?.id);
 
     // 1. Fetch persistent chat history from REST API
@@ -182,9 +213,22 @@ const MainApp = () => {
       }
     );
 
+    // 3. Subscribe to STOMP typing indicators topic /topic/conversation.{id}.typing
+    const typingSub = websocketService.subscribeToTyping(
+      activeConversation.id,
+      (typingEvent) => {
+        if (typingEvent && typingEvent.userId !== user?.id) {
+          setIsOtherUserTyping(!!typingEvent.typing);
+        }
+      }
+    );
+
     return () => {
       if (subscription) {
         subscription.unsubscribe();
+      }
+      if (typingSub) {
+        typingSub.unsubscribe();
       }
     };
   }, [activeConversation, isAuthenticated, user]);
@@ -228,6 +272,11 @@ const MainApp = () => {
     } catch (err) {
       console.error('Failed to open/create conversation:', err);
     }
+  };
+
+  const handleTyping = (isTyping) => {
+    if (!activeConversation) return;
+    websocketService.sendTypingIndicator(activeConversation.id, isTyping);
   };
 
   // Real-time message publish via STOMP (with ECDH + AES-GCM-256 E2EE)
@@ -321,9 +370,13 @@ const MainApp = () => {
           <ConversationList
             conversations={conversations}
             activeConversationId={activeConversation?.id}
-            onSelectConversation={setActiveConversation}
+            onSelectConversation={(conv) => {
+              setActiveConversation(conv);
+              setIsOtherUserTyping(false);
+            }}
             loading={loadingConversations}
             currentUserId={user?.id}
+            onlineUserIds={onlineUserIds}
           />
         </>
       }
@@ -333,6 +386,8 @@ const MainApp = () => {
           messages={messages}
           currentUserId={user?.id}
           onSendMessage={handleSendMessage}
+          onTyping={handleTyping}
+          isOtherUserTyping={isOtherUserTyping}
           loadingMessages={loadingMessages}
           isConnected={isConnected}
         />
