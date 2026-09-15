@@ -32,6 +32,9 @@ public class AuthenticationSecurityTest {
     private UserRepository userRepository;
 
     @Autowired
+    private com.rtca.repository.UserPublicKeyRepository publicKeyRepository;
+
+    @Autowired
     private ConversationRepository conversationRepository;
 
     @Autowired
@@ -44,6 +47,7 @@ public class AuthenticationSecurityTest {
     void setUp() {
         messageRepository.deleteAll();
         conversationRepository.deleteAll();
+        publicKeyRepository.deleteAll();
         userRepository.deleteAll();
     }
 

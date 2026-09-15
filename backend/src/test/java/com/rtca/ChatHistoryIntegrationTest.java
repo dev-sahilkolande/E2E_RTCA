@@ -35,6 +35,9 @@ public class ChatHistoryIntegrationTest {
     private UserRepository userRepository;
 
     @Autowired
+    private com.rtca.repository.UserPublicKeyRepository publicKeyRepository;
+
+    @Autowired
     private ConversationRepository conversationRepository;
 
     @Autowired
@@ -58,6 +61,7 @@ public class ChatHistoryIntegrationTest {
     void setUp() throws Exception {
         messageRepository.deleteAll();
         conversationRepository.deleteAll();
+        publicKeyRepository.deleteAll();
         userRepository.deleteAll();
 
         // Register User A

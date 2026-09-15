@@ -23,6 +23,9 @@ public class DatabaseFoundationTest {
     private UserRepository userRepository;
 
     @Autowired
+    private com.rtca.repository.UserPublicKeyRepository publicKeyRepository;
+
+    @Autowired
     private ConversationRepository conversationRepository;
 
     @Autowired
@@ -38,6 +41,7 @@ public class DatabaseFoundationTest {
     void setUp() {
         messageRepository.deleteAll();
         conversationRepository.deleteAll();
+        publicKeyRepository.deleteAll();
         userRepository.deleteAll();
 
         userA = userRepository.save(new User("alice", "alice@example.com", "hashed_pwd_1"));

@@ -48,6 +48,9 @@ public class WebSocketMessagingTest {
     private UserRepository userRepository;
 
     @Autowired
+    private com.rtca.repository.UserPublicKeyRepository publicKeyRepository;
+
+    @Autowired
     private ConversationRepository conversationRepository;
 
     @Autowired
@@ -67,6 +70,7 @@ public class WebSocketMessagingTest {
     void setUp() throws Exception {
         messageRepository.deleteAll();
         conversationRepository.deleteAll();
+        publicKeyRepository.deleteAll();
         userRepository.deleteAll();
 
         // Register User A
