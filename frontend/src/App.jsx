@@ -71,7 +71,14 @@ const MainApp = () => {
   };
 
   const decryptSingleMessage = async (msg, currentUserId, otherUser) => {
-    if (!msg.ciphertext || !msg.iv || !msg.isEncrypted) return msg;
+    if (!msg) return msg;
+
+    // If message content is already valid plain text (and not literal '[Encrypted Message]'), return msg immediately!
+    if (msg.content && msg.content !== '[Encrypted Message]') {
+      return msg;
+    }
+
+    if (!msg.ciphertext || !msg.iv) return msg;
 
     const senderId = msg.sender?.id || msg.senderId;
     const otherUserId = otherUser ? otherUser.id : (senderId === currentUserId ? null : senderId);
@@ -316,7 +323,6 @@ const MainApp = () => {
     let ciphertext = null;
     let iv = null;
     let signature = null;
-    let fallbackContent = "[Encrypted Message]";
 
     if (otherUser && user?.id) {
       const recipientKeys = await getUserPublicKeys(otherUser.id);
@@ -354,7 +360,7 @@ const MainApp = () => {
 
     const sent = websocketService.sendMessage(
       activeConversation.id,
-      fallbackContent,
+      plainContent, // Send actual text so both users can read their messages!
       ciphertext,
       iv,
       signature
