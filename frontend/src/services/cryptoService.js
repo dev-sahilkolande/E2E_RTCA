@@ -62,14 +62,63 @@ const base64ToArrayBuffer = (base64) => {
 };
 
 class CryptoService {
-  // Generate ECDH (Encryption) and ECDSA (Signing) Key Pairs
-  async initUserKeys(userId) {
-    let ecdhPrivateKey = await getKeyFromIndexedDB(`ecdh_private_${userId}`);
-    let ecdsaPrivateKey = await getKeyFromIndexedDB(`ecdsa_private_${userId}`);
-    let publicEcdhBase64 = await getKeyFromIndexedDB(`ecdh_public_${userId}`);
-    let publicEcdsaBase64 = await getKeyFromIndexedDB(`ecdsa_public_${userId}`);
+  // Helper to load or import user's ECDH private key
+  async getMyEcdhPrivateKey(userId) {
+    let raw = localStorage.getItem(`ecdh_priv_${userId}`) || await getKeyFromIndexedDB(`ecdh_private_${userId}`);
 
-    if (!ecdhPrivateKey || !ecdsaPrivateKey || !publicEcdhBase64 || !publicEcdsaBase64) {
+    if (!raw) return null;
+
+    if (typeof raw !== 'string') {
+      // Handle legacy CryptoKey object
+      return raw;
+    }
+
+    try {
+      return await window.crypto.subtle.importKey(
+        'pkcs8',
+        base64ToArrayBuffer(raw),
+        { name: 'ECDH', namedCurve: 'P-256' },
+        false,
+        ['deriveKey', 'deriveBits']
+      );
+    } catch (err) {
+      console.warn('Failed to import ECDH PKCS8 private key:', err);
+      return null;
+    }
+  }
+
+  // Helper to load or import user's ECDSA signing private key
+  async getMyEcdsaPrivateKey(userId) {
+    let raw = localStorage.getItem(`ecdsa_priv_${userId}`) || await getKeyFromIndexedDB(`ecdsa_private_${userId}`);
+
+    if (!raw) return null;
+
+    if (typeof raw !== 'string') {
+      return raw;
+    }
+
+    try {
+      return await window.crypto.subtle.importKey(
+        'pkcs8',
+        base64ToArrayBuffer(raw),
+        { name: 'ECDSA', namedCurve: 'P-256' },
+        false,
+        ['sign']
+      );
+    } catch (err) {
+      console.warn('Failed to import ECDSA PKCS8 signing key:', err);
+      return null;
+    }
+  }
+
+  // Generate or retrieve persistent ECDH & ECDSA keypairs
+  async initUserKeys(userId) {
+    let publicEcdhBase64 = localStorage.getItem(`ecdh_pub_${userId}`) || await getKeyFromIndexedDB(`ecdh_public_${userId}`);
+    let publicEcdsaBase64 = localStorage.getItem(`ecdsa_pub_${userId}`) || await getKeyFromIndexedDB(`ecdsa_public_${userId}`);
+    let ecdhPrivBase64 = localStorage.getItem(`ecdh_priv_${userId}`);
+    let ecdsaPrivBase64 = localStorage.getItem(`ecdsa_priv_${userId}`);
+
+    if (!ecdhPrivBase64 || !ecdsaPrivBase64 || !publicEcdhBase64 || !publicEcdsaBase64) {
       // 1. Generate ECDH key pair
       const ecdhPair = await window.crypto.subtle.generateKey(
         { name: 'ECDH', namedCurve: 'P-256' },
@@ -84,16 +133,27 @@ class CryptoService {
         ['sign', 'verify']
       );
 
-      // Export Public Keys to Base64 SPKI
-      const exportedEcdh = await window.crypto.subtle.exportKey('spki', ecdhPair.publicKey);
-      const exportedEcdsa = await window.crypto.subtle.exportKey('spki', ecdsaPair.publicKey);
+      // Export Public Keys (SPKI)
+      const exportedEcdhPub = await window.crypto.subtle.exportKey('spki', ecdhPair.publicKey);
+      const exportedEcdsaPub = await window.crypto.subtle.exportKey('spki', ecdsaPair.publicKey);
 
-      publicEcdhBase64 = arrayBufferToBase64(exportedEcdh);
-      publicEcdsaBase64 = arrayBufferToBase64(exportedEcdsa);
+      // Export Private Keys (PKCS8)
+      const exportedEcdhPriv = await window.crypto.subtle.exportKey('pkcs8', ecdhPair.privateKey);
+      const exportedEcdsaPriv = await window.crypto.subtle.exportKey('pkcs8', ecdsaPair.privateKey);
 
-      // Store in IndexedDB
-      await storeKeyInIndexedDB(`ecdh_private_${userId}`, ecdhPair.privateKey);
-      await storeKeyInIndexedDB(`ecdsa_private_${userId}`, ecdsaPair.privateKey);
+      publicEcdhBase64 = arrayBufferToBase64(exportedEcdhPub);
+      publicEcdsaBase64 = arrayBufferToBase64(exportedEcdsaPub);
+      ecdhPrivBase64 = arrayBufferToBase64(exportedEcdhPriv);
+      ecdsaPrivBase64 = arrayBufferToBase64(exportedEcdsaPriv);
+
+      // Store in localStorage & IndexedDB for max persistence
+      localStorage.setItem(`ecdh_pub_${userId}`, publicEcdhBase64);
+      localStorage.setItem(`ecdsa_pub_${userId}`, publicEcdsaBase64);
+      localStorage.setItem(`ecdh_priv_${userId}`, ecdhPrivBase64);
+      localStorage.setItem(`ecdsa_priv_${userId}`, ecdsaPrivBase64);
+
+      await storeKeyInIndexedDB(`ecdh_private_${userId}`, ecdhPrivBase64);
+      await storeKeyInIndexedDB(`ecdsa_private_${userId}`, ecdsaPrivBase64);
       await storeKeyInIndexedDB(`ecdh_public_${userId}`, publicEcdhBase64);
       await storeKeyInIndexedDB(`ecdsa_public_${userId}`, publicEcdsaBase64);
     }
@@ -106,13 +166,13 @@ class CryptoService {
 
   // Encrypt plaintext with recipient's ECDH public key & sign ciphertext
   async encryptMessage(userId, plaintext, recipientEcdhPublicKeyBase64) {
-    let myPrivateKey = await getKeyFromIndexedDB(`ecdh_private_${userId}`);
-    let mySigningKey = await getKeyFromIndexedDB(`ecdsa_private_${userId}`);
+    let myPrivateKey = await this.getMyEcdhPrivateKey(userId);
+    let mySigningKey = await this.getMyEcdsaPrivateKey(userId);
 
     if (!myPrivateKey || !mySigningKey) {
       await this.initUserKeys(userId);
-      myPrivateKey = await getKeyFromIndexedDB(`ecdh_private_${userId}`);
-      mySigningKey = await getKeyFromIndexedDB(`ecdsa_private_${userId}`);
+      myPrivateKey = await this.getMyEcdhPrivateKey(userId);
+      mySigningKey = await this.getMyEcdsaPrivateKey(userId);
     }
 
     if (!myPrivateKey || !mySigningKey) {
@@ -172,10 +232,10 @@ class CryptoService {
     senderEcdhPublicKeyBase64,
     senderEcdsaPublicKeyBase64
   ) {
-    let myPrivateKey = await getKeyFromIndexedDB(`ecdh_private_${userId}`);
+    let myPrivateKey = await this.getMyEcdhPrivateKey(userId);
     if (!myPrivateKey) {
       await this.initUserKeys(userId);
-      myPrivateKey = await getKeyFromIndexedDB(`ecdh_private_${userId}`);
+      myPrivateKey = await this.getMyEcdhPrivateKey(userId);
     }
 
     if (!myPrivateKey) {
