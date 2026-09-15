@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { LoginPage } from './pages/LoginPage';
 import { RegisterPage } from './pages/RegisterPage';
@@ -8,6 +8,7 @@ import { ConversationList } from './components/chat/ConversationList';
 import { ConversationView } from './components/chat/ConversationView';
 import api from './services/api';
 import { websocketService } from './services/websocketService';
+import { cryptoService } from './services/cryptoService';
 
 const MainApp = () => {
   const { user, token, isAuthenticated } = useAuth();
@@ -25,6 +26,75 @@ const MainApp = () => {
   const [messages, setMessages] = useState([]);
   const [loadingMessages, setLoadingMessages] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
+
+  // Cache user public keys to optimize E2EE key lookups
+  const userPublicKeyCache = useRef(new Map());
+
+  const getUserPublicKeys = async (targetUserId) => {
+    if (userPublicKeyCache.current.has(targetUserId)) {
+      return userPublicKeyCache.current.get(targetUserId);
+    }
+    try {
+      const res = await api.get(`/users/${targetUserId}/keys`);
+      if (res.data && res.data.success) {
+        const keys = res.data.data;
+        userPublicKeyCache.current.set(targetUserId, keys);
+        return keys;
+      }
+    } catch (err) {
+      console.warn(`Failed to fetch public keys for user ${targetUserId}:`, err);
+    }
+    return null;
+  };
+
+  const getOtherParticipant = (participants, currentUserId) => {
+    if (!participants || !Array.isArray(participants)) return null;
+    for (const p of participants) {
+      const pId = p.user ? p.user.id : p.id;
+      if (pId !== currentUserId) {
+        return p.user ? p.user : p;
+      }
+    }
+    return null;
+  };
+
+  const decryptSingleMessage = async (msg, currentUserId, otherUser) => {
+    if (!msg.ciphertext || !msg.iv || !msg.isEncrypted) return msg;
+
+    const senderId = msg.sender?.id || msg.senderId;
+    let targetPublicKeys = null;
+
+    if (senderId === currentUserId) {
+      if (otherUser) {
+        targetPublicKeys = await getUserPublicKeys(otherUser.id);
+      }
+    } else {
+      targetPublicKeys = await getUserPublicKeys(senderId);
+    }
+
+    if (!targetPublicKeys || !targetPublicKeys.publicEcdhKey) {
+      return msg;
+    }
+
+    try {
+      const plaintext = await cryptoService.decryptMessage(
+        currentUserId,
+        msg.ciphertext,
+        msg.iv,
+        msg.signature,
+        targetPublicKeys.publicEcdhKey,
+        targetPublicKeys.publicEcdsaKey
+      );
+      return {
+        ...msg,
+        content: plaintext,
+        isEncrypted: true
+      };
+    } catch (err) {
+      console.warn('Failed to decrypt message:', err);
+      return msg;
+    }
+  };
 
   // Fetch active user conversations on mount / login
   useEffect(() => {
@@ -64,13 +134,19 @@ const MainApp = () => {
   useEffect(() => {
     if (!activeConversation || !isAuthenticated) return;
 
+    const otherUser = getOtherParticipant(activeConversation.participants, user?.id);
+
     // 1. Fetch persistent chat history from REST API
     const fetchHistory = async () => {
       setLoadingMessages(true);
       try {
         const res = await api.get(`/conversations/${activeConversation.id}/messages`);
         if (res.data && res.data.success) {
-          setMessages(res.data.data);
+          const rawMessages = res.data.data;
+          const decryptedList = await Promise.all(
+            rawMessages.map((m) => decryptSingleMessage(m, user?.id, otherUser))
+          );
+          setMessages(decryptedList);
         }
       } catch (err) {
         console.error('Failed to fetch chat history:', err);
@@ -84,20 +160,21 @@ const MainApp = () => {
     // 2. Subscribe to STOMP real-time topic /topic/conversation.{id}
     const subscription = websocketService.subscribeToConversation(
       activeConversation.id,
-      (incomingMsg) => {
+      async (incomingMsg) => {
+        const processedMsg = await decryptSingleMessage(incomingMsg, user?.id, otherUser);
+
         setMessages((prevMessages) => {
-          // Replace matching pending message or append new message if not present
           const existingIndex = prevMessages.findIndex(
-            (m) => (m.id && m.id === incomingMsg.id) || (m.status === 'pending' && m.content === incomingMsg.content)
+            (m) => (m.id && m.id === processedMsg.id) || (m.status === 'pending' && m.ciphertext === processedMsg.ciphertext)
           );
 
           if (existingIndex !== -1) {
             const updated = [...prevMessages];
-            updated[existingIndex] = incomingMsg;
+            updated[existingIndex] = processedMsg;
             return updated;
           }
 
-          return [...prevMessages, incomingMsg];
+          return [...prevMessages, processedMsg];
         });
 
         // Refresh conversation sidebar
@@ -110,7 +187,7 @@ const MainApp = () => {
         subscription.unsubscribe();
       }
     };
-  }, [activeConversation, isAuthenticated]);
+  }, [activeConversation, isAuthenticated, user]);
 
   // Debounced User Search
   useEffect(() => {
@@ -153,9 +230,40 @@ const MainApp = () => {
     }
   };
 
-  // Real-time message publish via STOMP
-  const handleSendMessage = (content) => {
+  // Real-time message publish via STOMP (with ECDH + AES-GCM-256 E2EE)
+  const handleSendMessage = async (content) => {
     if (!activeConversation || !content.trim()) return;
+
+    const plainContent = content.trim();
+    const otherUser = getOtherParticipant(activeConversation.participants, user?.id);
+
+    let ciphertext = null;
+    let iv = null;
+    let signature = null;
+    let fallbackContent = "[Encrypted Message]";
+
+    if (otherUser && user?.id) {
+      const recipientKeys = await getUserPublicKeys(otherUser.id);
+      if (recipientKeys && recipientKeys.publicEcdhKey) {
+        try {
+          const encResult = await cryptoService.encryptMessage(
+            user.id,
+            plainContent,
+            recipientKeys.publicEcdhKey
+          );
+          ciphertext = encResult.ciphertext;
+          iv = encResult.iv;
+          signature = encResult.signature;
+        } catch (err) {
+          console.warn('Encryption failed, sending unencrypted fallback:', err);
+          fallbackContent = plainContent;
+        }
+      } else {
+        fallbackContent = plainContent;
+      }
+    } else {
+      fallbackContent = plainContent;
+    }
 
     // Optimistic pending message preview
     const pendingMsg = {
@@ -163,17 +271,27 @@ const MainApp = () => {
       conversationId: activeConversation.id,
       sender: user,
       senderId: user?.id,
-      content: content.trim(),
+      content: plainContent,
+      ciphertext,
+      iv,
+      signature,
       createdAt: new Date().toISOString(),
       status: 'pending',
+      isEncrypted: !!ciphertext
     };
 
     setMessages((prev) => [...prev, pendingMsg]);
 
     // Publish via STOMP WebSocket
-    const sent = websocketService.sendMessage(activeConversation.id, content.trim());
+    const sent = websocketService.sendMessage(
+      activeConversation.id,
+      fallbackContent,
+      ciphertext,
+      iv,
+      signature
+    );
+
     if (!sent) {
-      // Mark failed if socket disconnected
       setMessages((prev) =>
         prev.map((m) => (m.id === pendingMsg.id ? { ...m, status: 'failed' } : m))
       );

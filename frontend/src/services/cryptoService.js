@@ -205,17 +205,9 @@ class CryptoService {
     const senderPublicKey = await window.crypto.subtle.importKey(
       'spki',
       base64ToArrayBuffer(senderEcdhPublicKeyBase64),
-      { name: 'ECDSA', namedCurve: 'P-256' }, // fallback/compat check
+      { name: 'ECDH', namedCurve: 'P-256' },
       false,
       []
-    ).catch(() =>
-      window.crypto.subtle.importKey(
-        'spki',
-        base64ToArrayBuffer(senderEcdhPublicKeyBase64),
-        { name: 'ECDH', namedCurve: 'P-256' },
-        false,
-        []
-      )
     );
 
     // Derive AES-GCM-256 shared session key

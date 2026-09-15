@@ -74,7 +74,7 @@ class WebSocketService {
     return subscription;
   }
 
-  sendMessage(conversationId, content) {
+  sendMessage(conversationId, content, ciphertext = null, iv = null, signature = null) {
     if (!this.client || !this.client.active) {
       console.error('Cannot send STOMP message: Client disconnected.');
       return false;
@@ -85,6 +85,9 @@ class WebSocketService {
       body: JSON.stringify({
         conversationId,
         content,
+        ciphertext,
+        iv,
+        signature,
       }),
     });
 

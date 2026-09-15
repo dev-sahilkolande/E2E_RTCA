@@ -57,7 +57,14 @@ public class MessageService {
         User sender = userRepository.findById(senderId)
                 .orElseThrow(() -> new IllegalArgumentException("Sender identity not found with ID: " + senderId));
 
-        Message message = new Message(conversation, sender, request.getContent().trim());
+        Message message = new Message(
+                conversation,
+                sender,
+                request.getContent().trim(),
+                request.getCiphertext(),
+                request.getIv(),
+                request.getSignature()
+        );
         Message savedMessage = messageRepository.save(message);
 
         // Update conversation timestamp

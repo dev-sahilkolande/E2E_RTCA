@@ -25,6 +25,18 @@ public class Message {
     @Column(nullable = false, columnDefinition = "TEXT")
     private String content;
 
+    @Column(name = "ciphertext", columnDefinition = "TEXT")
+    private String ciphertext;
+
+    @Column(name = "iv", length = 255)
+    private String iv;
+
+    @Column(name = "signature", columnDefinition = "TEXT")
+    private String signature;
+
+    @Column(name = "is_encrypted", nullable = false)
+    private boolean isEncrypted = false;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 
@@ -35,6 +47,17 @@ public class Message {
         this.conversation = conversation;
         this.sender = sender;
         this.content = content;
+        this.isEncrypted = false;
+    }
+
+    public Message(Conversation conversation, User sender, String content, String ciphertext, String iv, String signature) {
+        this.conversation = conversation;
+        this.sender = sender;
+        this.content = content;
+        this.ciphertext = ciphertext;
+        this.iv = iv;
+        this.signature = signature;
+        this.isEncrypted = (ciphertext != null && !ciphertext.isBlank());
     }
 
     @PrePersist
@@ -74,6 +97,38 @@ public class Message {
 
     public void setContent(String content) {
         this.content = content;
+    }
+
+    public String getCiphertext() {
+        return ciphertext;
+    }
+
+    public void setCiphertext(String ciphertext) {
+        this.ciphertext = ciphertext;
+    }
+
+    public String getIv() {
+        return iv;
+    }
+
+    public void setIv(String iv) {
+        this.iv = iv;
+    }
+
+    public String getSignature() {
+        return signature;
+    }
+
+    public void setSignature(String signature) {
+        this.signature = signature;
+    }
+
+    public boolean isEncrypted() {
+        return isEncrypted;
+    }
+
+    public void setEncrypted(boolean encrypted) {
+        isEncrypted = encrypted;
     }
 
     public LocalDateTime getCreatedAt() {

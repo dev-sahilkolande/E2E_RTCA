@@ -10,6 +10,10 @@ public class ChatMessageResponse {
     private Long conversationId;
     private UserDto sender;
     private String content;
+    private String ciphertext;
+    private String iv;
+    private String signature;
+    private boolean isEncrypted;
     private LocalDateTime createdAt;
     private String status = "confirmed";
 
@@ -22,6 +26,19 @@ public class ChatMessageResponse {
         this.sender = sender;
         this.content = content;
         this.createdAt = createdAt;
+        this.isEncrypted = false;
+    }
+
+    public ChatMessageResponse(Long id, Long conversationId, UserDto sender, String content, String ciphertext, String iv, String signature, boolean isEncrypted, LocalDateTime createdAt) {
+        this.id = id;
+        this.conversationId = conversationId;
+        this.sender = sender;
+        this.content = content;
+        this.ciphertext = ciphertext;
+        this.iv = iv;
+        this.signature = signature;
+        this.isEncrypted = isEncrypted;
+        this.createdAt = createdAt;
     }
 
     public static ChatMessageResponse fromEntity(Message message) {
@@ -31,6 +48,10 @@ public class ChatMessageResponse {
                 message.getConversation().getId(),
                 UserDto.fromEntity(message.getSender()),
                 message.getContent(),
+                message.getCiphertext(),
+                message.getIv(),
+                message.getSignature(),
+                message.isEncrypted(),
                 message.getCreatedAt()
         );
     }
@@ -65,6 +86,38 @@ public class ChatMessageResponse {
 
     public void setContent(String content) {
         this.content = content;
+    }
+
+    public String getCiphertext() {
+        return ciphertext;
+    }
+
+    public void setCiphertext(String ciphertext) {
+        this.ciphertext = ciphertext;
+    }
+
+    public String getIv() {
+        return iv;
+    }
+
+    public void setIv(String iv) {
+        this.iv = iv;
+    }
+
+    public String getSignature() {
+        return signature;
+    }
+
+    public void setSignature(String signature) {
+        this.signature = signature;
+    }
+
+    public boolean isEncrypted() {
+        return isEncrypted;
+    }
+
+    public void setEncrypted(boolean encrypted) {
+        isEncrypted = encrypted;
     }
 
     public LocalDateTime getCreatedAt() {

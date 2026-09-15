@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import api from '../services/api';
+import { cryptoService } from '../services/cryptoService';
 
 const AuthContext = createContext(null);
 
@@ -11,6 +12,16 @@ export const AuthProvider = ({ children }) => {
   const [token, setToken] = useState(() => localStorage.getItem('token') || null);
   const [isLoading, setIsLoading] = useState(true);
 
+  const syncE2EEKeys = async (userData) => {
+    if (!userData || !userData.id) return;
+    try {
+      const keys = await cryptoService.initUserKeys(userData.id);
+      await api.post('/users/keys', keys);
+    } catch (err) {
+      console.warn('E2EE key sync warning:', err);
+    }
+  };
+
   // Bootstrap auth session on startup
   useEffect(() => {
     const bootstrapAuth = async () => {
@@ -19,8 +30,10 @@ export const AuthProvider = ({ children }) => {
         try {
           const res = await api.get('/auth/me');
           if (res.data && res.data.success) {
-            setUser(res.data.data);
-            localStorage.setItem('user', JSON.stringify(res.data.data));
+            const userData = res.data.data;
+            setUser(userData);
+            localStorage.setItem('user', JSON.stringify(userData));
+            syncE2EEKeys(userData);
           } else {
             clearSession();
           }
@@ -59,6 +72,7 @@ export const AuthProvider = ({ children }) => {
         setUser(userData);
         localStorage.setItem('token', newToken);
         localStorage.setItem('user', JSON.stringify(userData));
+        syncE2EEKeys(userData);
         return { success: true };
       }
       return { success: false, message: res.data?.message || 'Login failed.' };
@@ -77,6 +91,7 @@ export const AuthProvider = ({ children }) => {
         setUser(userData);
         localStorage.setItem('token', newToken);
         localStorage.setItem('user', JSON.stringify(userData));
+        syncE2EEKeys(userData);
         return { success: true };
       }
       return { success: false, message: res.data?.message || 'Registration failed.' };

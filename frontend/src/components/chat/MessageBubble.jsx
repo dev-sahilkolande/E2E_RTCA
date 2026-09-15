@@ -1,5 +1,5 @@
 import React from 'react';
-import { Check, Clock, AlertCircle } from 'lucide-react';
+import { Check, Clock, AlertCircle, Lock } from 'lucide-react';
 
 export const MessageBubble = ({ message, isOutgoing }) => {
   const formatTime = (timeStr) => {
@@ -14,6 +14,7 @@ export const MessageBubble = ({ message, isOutgoing }) => {
 
   const isPending = message.status === 'pending';
   const isFailed = message.status === 'failed';
+  const isEncrypted = message.isEncrypted || !!message.ciphertext;
 
   return (
     <div
@@ -49,6 +50,9 @@ export const MessageBubble = ({ message, isOutgoing }) => {
       </div>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginTop: '4px', fontSize: '0.72rem', color: 'var(--text-dim)' }}>
+        {isEncrypted && (
+          <Lock size={11} color="var(--primary-light)" title="End-to-End Encrypted (AES-GCM-256)" style={{ marginRight: '2px' }} />
+        )}
         <span>{formatTime(message.createdAt)}</span>
         {isOutgoing && (
           <>

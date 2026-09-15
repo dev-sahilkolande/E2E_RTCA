@@ -3,7 +3,7 @@ import { Avatar } from '../common/Avatar';
 import { MessageList } from './MessageList';
 import { MessageComposer } from './MessageComposer';
 import { EmptyState } from '../common/EmptyState';
-import { MessageSquare, ArrowLeft } from 'lucide-react';
+import { MessageSquare, ArrowLeft, Lock } from 'lucide-react';
 
 export const ConversationView = ({
   activeConversation,
@@ -87,7 +87,25 @@ export const ConversationView = ({
           </div>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+          <span
+            style={{
+              fontSize: '0.75rem',
+              color: 'var(--primary-light)',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '4px',
+              backgroundColor: 'rgba(99, 102, 241, 0.1)',
+              padding: '4px 8px',
+              borderRadius: 'var(--radius-sm)',
+              border: '1px solid rgba(99, 102, 241, 0.2)'
+            }}
+            title="Messages are encrypted on your device using ECDH P-256 and AES-GCM-256"
+          >
+            <Lock size={12} />
+            E2E Encrypted
+          </span>
+
           <span
             style={{
               fontSize: '0.75rem',
