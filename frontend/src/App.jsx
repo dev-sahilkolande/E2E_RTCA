@@ -66,17 +66,24 @@ const MainApp = () => {
     if (!msg.ciphertext || !msg.iv || !msg.isEncrypted) return msg;
 
     const senderId = msg.sender?.id || msg.senderId;
-    let targetPublicKeys = null;
+    let ecdhPublicKeyToUse = null;
+    let ecdsaPublicKeyToUse = null;
 
     if (senderId === currentUserId) {
       if (otherUser) {
-        targetPublicKeys = await getUserPublicKeys(otherUser.id);
+        const recipientKeys = await getUserPublicKeys(otherUser.id);
+        const myKeys = await getUserPublicKeys(currentUserId);
+        ecdhPublicKeyToUse = recipientKeys?.publicEcdhKey;
+        ecdsaPublicKeyToUse = myKeys?.publicEcdsaKey;
       }
     } else {
-      targetPublicKeys = await getUserPublicKeys(senderId);
+      const senderKeys = await getUserPublicKeys(senderId);
+      ecdhPublicKeyToUse = senderKeys?.publicEcdhKey;
+      ecdsaPublicKeyToUse = senderKeys?.publicEcdsaKey;
     }
 
-    if (!targetPublicKeys || !targetPublicKeys.publicEcdhKey) {
+    if (!ecdhPublicKeyToUse) {
+      console.warn(`E2EE Decrypt Warning: Public key missing for user ID ${senderId}.`);
       return msg;
     }
 
@@ -86,8 +93,8 @@ const MainApp = () => {
         msg.ciphertext,
         msg.iv,
         msg.signature,
-        targetPublicKeys.publicEcdhKey,
-        targetPublicKeys.publicEcdsaKey
+        ecdhPublicKeyToUse,
+        ecdsaPublicKeyToUse
       );
       return {
         ...msg,
@@ -95,7 +102,7 @@ const MainApp = () => {
         isEncrypted: true
       };
     } catch (err) {
-      console.warn('Failed to decrypt message:', err);
+      console.warn('Failed to decrypt message payload:', err);
       return msg;
     }
   };

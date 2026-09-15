@@ -106,8 +106,14 @@ class CryptoService {
 
   // Encrypt plaintext with recipient's ECDH public key & sign ciphertext
   async encryptMessage(userId, plaintext, recipientEcdhPublicKeyBase64) {
-    const myPrivateKey = await getKeyFromIndexedDB(`ecdh_private_${userId}`);
-    const mySigningKey = await getKeyFromIndexedDB(`ecdsa_private_${userId}`);
+    let myPrivateKey = await getKeyFromIndexedDB(`ecdh_private_${userId}`);
+    let mySigningKey = await getKeyFromIndexedDB(`ecdsa_private_${userId}`);
+
+    if (!myPrivateKey || !mySigningKey) {
+      await this.initUserKeys(userId);
+      myPrivateKey = await getKeyFromIndexedDB(`ecdh_private_${userId}`);
+      mySigningKey = await getKeyFromIndexedDB(`ecdsa_private_${userId}`);
+    }
 
     if (!myPrivateKey || !mySigningKey) {
       throw new Error('E2EE Keys not initialized for user.');
@@ -166,7 +172,12 @@ class CryptoService {
     senderEcdhPublicKeyBase64,
     senderEcdsaPublicKeyBase64
   ) {
-    const myPrivateKey = await getKeyFromIndexedDB(`ecdh_private_${userId}`);
+    let myPrivateKey = await getKeyFromIndexedDB(`ecdh_private_${userId}`);
+    if (!myPrivateKey) {
+      await this.initUserKeys(userId);
+      myPrivateKey = await getKeyFromIndexedDB(`ecdh_private_${userId}`);
+    }
+
     if (!myPrivateKey) {
       throw new Error('E2EE Private key missing.');
     }

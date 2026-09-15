@@ -31,9 +31,9 @@ export const AuthProvider = ({ children }) => {
           const res = await api.get('/auth/me');
           if (res.data && res.data.success) {
             const userData = res.data.data;
+            await syncE2EEKeys(userData);
             setUser(userData);
             localStorage.setItem('user', JSON.stringify(userData));
-            syncE2EEKeys(userData);
           } else {
             clearSession();
           }
@@ -69,10 +69,10 @@ export const AuthProvider = ({ children }) => {
       if (res.data && res.data.success) {
         const { token: newToken, user: userData } = res.data.data;
         setToken(newToken);
-        setUser(userData);
         localStorage.setItem('token', newToken);
         localStorage.setItem('user', JSON.stringify(userData));
-        syncE2EEKeys(userData);
+        await syncE2EEKeys(userData);
+        setUser(userData);
         return { success: true };
       }
       return { success: false, message: res.data?.message || 'Login failed.' };
@@ -88,10 +88,10 @@ export const AuthProvider = ({ children }) => {
       if (res.data && res.data.success) {
         const { token: newToken, user: userData } = res.data.data;
         setToken(newToken);
-        setUser(userData);
         localStorage.setItem('token', newToken);
         localStorage.setItem('user', JSON.stringify(userData));
-        syncE2EEKeys(userData);
+        await syncE2EEKeys(userData);
+        setUser(userData);
         return { success: true };
       }
       return { success: false, message: res.data?.message || 'Registration failed.' };
